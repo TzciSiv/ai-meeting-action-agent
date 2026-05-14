@@ -1,0 +1,71 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+!.env.example
+!frontend/.env.example
+
+# Python virtual environments and caches
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.coverage
+coverage.xml
+htmlcov/
+
+# Python build/package output
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Local databases and runtime data
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Frontend dependencies, cache, and build output
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Logs and generated reports
+*.log
+*.docx
+*.pdf
+
+# Local model and training artifacts
+models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
+checkpoint-*/
+summarization_model_training/**/__pycache__/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
