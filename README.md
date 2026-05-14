@@ -30,7 +30,51 @@ A full-stack meeting assistant built with React, TypeScript, FastAPI, SQLite, JW
   </a>
 </p>
 
-## Project Structure
+## Backend Workflow Diagram
+
+```mermaid
+flowchart TD
+  request["Frontend REST request"]
+
+  api["api.py<br/>FastAPI routes"]
+  schemas["schemas.py<br/>Request and response shapes"]
+  services["services.py<br/>Main workflow coordinator"]
+
+  auth["auth.py<br/>Login, demo user, JWT checks"]
+  database["database.py<br/>Database connection"]
+  models["models.py<br/>User, Meeting, ActionItem tables"]
+  sqlite["SQLite<br/>data/meeting_agent.db"]
+
+  transcript["transcript_processing.py<br/>Clean transcript text"]
+  llm["llm.py<br/>Whisper + GPT calls"]
+  actionAgent["action_agent.py<br/>Actions, risks, decisions"]
+  localModel["local_model.py<br/>Optional local summary model"]
+  exports["exports.py<br/>Word document builders"]
+
+  openai["OpenAI API<br/>Whisper transcription<br/>GPT summary, actions, answers"]
+  docx["Downloadable .docx files"]
+
+  request --> api
+  api --> schemas
+  api --> auth
+  auth --> database
+  database --> models
+  models --> sqlite
+
+  api --> services
+  services --> transcript
+  services --> llm
+  services --> actionAgent
+  services --> localModel
+  services --> database
+
+  llm --> openai
+  actionAgent --> llm
+
+  api --> exports
+  services --> exports
+  exports --> docx
+```
 
 - `backend/api.py` - FastAPI app and REST routes.
 - `backend/auth.py` - password hashing, JWT creation, and token validation.
