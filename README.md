@@ -2,20 +2,33 @@
 
 A full-stack meeting assistant built with React, TypeScript, FastAPI, SQLite, JWT auth, and OpenAI. It turns a Whisper transcript into private meeting records, action items, direct follow-up answers, and downloadable Word reports.
 
-```text
-login -> transcript -> OpenAI summary + action extraction -> SQLite -> React action workflow
-```
-
 ## Main Features
 
-- Upload meeting audio and fill the transcript field using the Whisper API.
-- Opens in a demo workspace automatically, with optional register/login using JWT bearer-token authentication.
-- Analyze a meeting transcript with GPT as the default summary model and a separate GPT action extraction call.
-- Save each meeting, transcript, summary, follow-up question, follow-up answer, and action board to SQLite.
-- View meeting history and reopen saved meetings.
-- Add, edit, complete, and delete action items for each meeting.
-- Download the transcript as a Word file.
-- Download a full Word report that includes current action statuses.
+- Transcribe meeting audio with Whisper and format the output into a readable transcript.
+- Analyze transcripts with GPT to generate summaries, follow-up answers, risks, decisions, and action items.
+- Extract action items with a dedicated GPT call for cleaner task tracking.
+- Save meetings, transcripts, summaries, answers, and action boards to SQLite.
+- Reopen saved meetings from history and continue managing their action items.
+- Add, edit, complete, and delete action items after the meeting.
+- Export transcripts and full meeting reports as Word documents.
+
+## Tech Stack
+
+- **Frontend:** React, TypeScript, Vite, CSS
+- **Backend:** FastAPI, Python, Pydantic
+- **Database:** SQLite, SQLAlchemy
+- **Authentication:** JWT bearer tokens, password hashing
+- **AI:** OpenAI Whisper API, OpenAI GPT API
+- **Exports:** python-docx for Word transcript and report downloads
+- **Testing:** unittest, FastAPI TestClient
+
+## Video Demonstration
+
+<p align="center">
+  <a href="https://youtu.be/7KSfB6dQjrE">
+    <img src="https://img.youtube.com/vi/7KSfB6dQjrE/maxresdefault.jpg" alt="AI Meeting Action Agent demo video" width="900">
+  </a>
+</p>
 
 ## Project Structure
 
@@ -81,42 +94,3 @@ The React app expects the API at `http://localhost:8000` by default. To change i
 ```bash
 VITE_API_BASE_URL=http://localhost:8000
 ```
-
-## API Endpoints
-
-- `POST /api/auth/register` - create a user and return a bearer token.
-- `POST /api/auth/login` - authenticate a user and return a bearer token.
-- `POST /api/auth/demo` - create or reuse the demo user and return a bearer token.
-- `GET /api/auth/me` - return the current authenticated user.
-- `POST /api/meetings/transcribe` - transcribe an uploaded audio file with Whisper.
-- `POST /api/meetings/analyze` - analyze a transcript, save a meeting, and save action items.
-- `GET /api/meetings` - list saved meetings.
-- `GET /api/meetings/{id}` - get one meeting with summary, transcript, and actions.
-- `PATCH /api/meetings/{id}` - rename a saved meeting.
-- `POST /api/meetings/{id}/actions` - add an action item to a meeting.
-- `PATCH /api/actions/{id}` - edit action task, owner, deadline, evidence, or status.
-- `DELETE /api/actions/{id}` - delete an action item.
-- `GET /api/meetings/{id}/transcript` - download transcript as `.docx`.
-- `GET /api/meetings/{id}/export` - download full meeting report as `.docx`.
-
-## Test
-
-```bash
-python -m unittest discover -s tests
-python -m py_compile backend/*.py
-cd frontend
-npm run build
-```
-
-## Resume Title
-
-**AI Meeting Action Agent**
-
-## Resume Bullets
-
-- Built a full-stack AI meeting assistant with React, TypeScript, FastAPI, optional JWT auth, SQLAlchemy, SQLite, and OpenAI APIs.
-- Designed REST endpoints for authentication, meeting analysis, saved meeting history, action-item CRUD, and Word report exports.
-- Implemented an agent workflow that turns meeting transcripts into summaries, decisions, risks, follow-up answers, and GPT-extracted action boards.
-- Added direct follow-up answers through the structured meeting summary call, with GPT answering local-model follow-up questions when needed.
-- Added persistent action follow-up so users can add, edit, delete, and mark tasks complete after the meeting.
-- Generated `.docx` transcript and full-report downloads that reflect current database action statuses.
