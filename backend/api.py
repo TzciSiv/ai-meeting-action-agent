@@ -93,6 +93,7 @@ from .services import (
 
 app = FastAPI(title="ai-meeting-action-agent API")
 security = HTTPBearer(auto_error=False)
+AUTH_SCHEME = "bearer"
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
 MAX_TRANSCRIPT_CHARS = int(os.getenv("MAX_TRANSCRIPT_CHARS", "250000"))
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))
@@ -349,7 +350,7 @@ def register(request: UserCreate, http_request: Request, db: Session = Depends(g
 
     return {
         "access_token": create_access_token(user.id),
-        "token_type": "bearer",
+        "token_type": AUTH_SCHEME,
         "user": user_to_dict(user),
     }
 
@@ -364,7 +365,7 @@ def login(request: UserLogin, http_request: Request, db: Session = Depends(get_d
     record_audit_event(db, "auth.login", user_id=user.id, entity_type="user", entity_id=user.id, **audit_hashes(http_request))
     return {
         "access_token": create_access_token(user.id),
-        "token_type": "bearer",
+        "token_type": AUTH_SCHEME,
         "user": user_to_dict(user),
     }
 
@@ -376,7 +377,7 @@ def demo_login(request: Request, db: Session = Depends(get_db)) -> dict:
     record_audit_event(db, "auth.demo", user_id=user.id, entity_type="user", entity_id=user.id, **audit_hashes(request))
     return {
         "access_token": create_access_token(user.id),
-        "token_type": "bearer",
+        "token_type": AUTH_SCHEME,
         "user": user_to_dict(user),
     }
 

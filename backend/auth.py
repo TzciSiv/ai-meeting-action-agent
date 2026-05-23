@@ -27,7 +27,8 @@ load_environment()
 
 JWT_ALGORITHM = "HS256"
 DEMO_EMAIL = "demo@example.com"
-DEMO_PASSWORD = "password123"
+# Demo-only default credential used for local exploration and tests.
+DEMO_PASSWORD = "password123"  # nosec B105
 VALID_ROLES = {"owner", "reviewer", "admin"}
 
 
