@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AI Meeting Action Agent">
+  <defs>
+    <linearGradient id="bubble" x1="10" x2="54" y1="14" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38bdf8" />
+      <stop offset="1" stop-color="#22c55e" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#0b1120" />
+  <path
+    d="M15 18h34a7 7 0 0 1 7 7v15a7 7 0 0 1-7 7H31l-12 8 3-8h-7a7 7 0 0 1-7-7V25a7 7 0 0 1 7-7Z"
+    fill="#111827"
+    stroke="url(#bubble)"
+    stroke-width="4"
+    stroke-linejoin="round"
+  />
+  <circle cx="24" cy="32" r="4" fill="#38bdf8" />
+  <circle cx="39" cy="32" r="4" fill="#22c55e" />
+  <path
+    d="m26 43 7 7 15-17"
+    fill="none"
+    stroke="#f8fafc"
+    stroke-width="5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

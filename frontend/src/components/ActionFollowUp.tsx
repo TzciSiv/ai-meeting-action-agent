@@ -106,7 +106,12 @@ function ActionEditor({ action, onChanged }: { action: ActionItem; onChanged: ()
       <div className="editor-main">
         <label>
           Task
-          <input value={task} onChange={(event) => setTask(event.target.value)} />
+          <textarea
+            className="action-task-input"
+            value={task}
+            rows={2}
+            onChange={(event) => setTask(event.target.value)}
+          />
         </label>
         <div className="editor-grid">
           <label>

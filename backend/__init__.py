@@ -1,2 +1,1 @@
-"""Meeting summarizer pipeline package."""
-
+"""AI meeting action agent backend package."""

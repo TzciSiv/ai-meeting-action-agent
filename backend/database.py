@@ -1,7 +1,10 @@
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect, text
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from .config import load_environment
@@ -10,49 +13,53 @@ from .config import load_environment
 load_environment()
 
 
-DEFAULT_DB_PATH = Path("data") / "meeting_agent.db"
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH.as_posix()}")
+DEFAULT_DATABASE_URL = "postgresql+psycopg://meeting_agent:meeting_agent@localhost:5432/meeting_agent"
+DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+SCHEMA_LOCK_ID = 51420260518
+
+if not DATABASE_URL.startswith("postgresql"):
+    raise RuntimeError("DATABASE_URL must point to Postgres, for example: " + DEFAULT_DATABASE_URL)
 
 
 class Base(DeclarativeBase):
     pass
 
 
-def ensure_sqlite_parent() -> None:
-    if DATABASE_URL.startswith("sqlite:///"):
-        db_path = Path(DATABASE_URL.replace("sqlite:///", "", 1))
-        if db_path.parent != Path("."):
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-
-
-ensure_sqlite_parent()
-
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
-)
+engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def init_db() -> None:
     from . import models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
-    run_lightweight_migrations()
+    with engine.begin() as connection:
+        connection.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": SCHEMA_LOCK_ID})
+        ensure_postgres_extensions(connection)
+        Base.metadata.create_all(bind=connection)
+        run_migrations(connection)
 
 
-def run_lightweight_migrations() -> None:
-    if not DATABASE_URL.startswith("sqlite"):
+def ensure_postgres_extensions(connection: Connection | None = None) -> None:
+    if connection is not None:
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         return
 
     with engine.begin() as connection:
-        inspector = inspect(connection)
-        if "meetings" not in inspector.get_table_names():
-            return
+        ensure_postgres_extensions(connection)
 
-        columns = {column["name"] for column in inspector.get_columns("meetings")}
-        if "user_id" not in columns:
-            connection.execute(text("ALTER TABLE meetings ADD COLUMN user_id INTEGER"))
+
+def run_migrations(connection: Connection) -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    alembic_ini = project_root / "alembic.ini"
+    migrations_dir = project_root / "migrations"
+    if not alembic_ini.exists() or not migrations_dir.exists():
+        return
+
+    config = Config(str(alembic_ini))
+    config.set_main_option("script_location", str(migrations_dir))
+    config.set_main_option("sqlalchemy.url", DATABASE_URL)
+    config.attributes["connection"] = connection
+    command.upgrade(config, "head")
 
 
 def get_db():

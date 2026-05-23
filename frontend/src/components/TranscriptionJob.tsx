@@ -7,7 +7,10 @@ interface Props {
   onBackToAnalyze: () => void;
 }
 
-function formatFileSize(bytes: number) {
+function formatFileSize(bytes?: number) {
+  if (!Number.isFinite(bytes) || !bytes || bytes <= 0) {
+    return "Unknown";
+  }
   if (bytes < 1024 * 1024) {
     return `${Math.max(bytes / 1024, 1).toFixed(1)} KB`;
   }
@@ -29,9 +32,20 @@ function statusLabel(status: TranscriptionJobState["status"]) {
   return "Failed";
 }
 
+function stepLabel(step?: string) {
+  const labels: Record<string, string> = {
+    transcription_queued: "Queued",
+    transcribing: "Transcribing audio",
+    transcription_completed: "Transcription complete",
+    transcription_failed: "Transcription failed",
+  };
+  return step ? labels[step] ?? step.replace(/_/g, " ") : "";
+}
+
 function getRunningStep(job: TranscriptionJobState, processingDelayElapsed: boolean) {
   if (job.status !== "running") return formatTime(job.completedAt);
-  return processingDelayElapsed ? "Processing by Whisper" : "Sending audio to Whisper";
+  if (job.currentStep) return stepLabel(job.currentStep);
+  return processingDelayElapsed ? "Processing transcription" : "Sending audio for transcription";
 }
 
 function getTranscriptFileName(job: TranscriptionJobState) {

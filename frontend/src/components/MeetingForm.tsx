@@ -1,91 +1,186 @@
 import { FormEvent, useState } from "react";
-import { analyzeMeeting, transcribeMeetingAudio } from "../api";
-import type { AnalyzeRequest, Meeting, TranscriptionJob } from "../types";
+import type { DragEvent } from "react";
+import { importTranscriptDocument } from "../api";
+import type { ActiveAnalysisJob } from "../types";
 
 interface Props {
   transcript: string;
   onTranscriptChange: (transcript: string) => void;
-  onAnalyze: (meeting: Meeting) => Promise<void>;
-  onShowTranscriptionJob: () => void;
-  onTranscriptionJobChange: (job: TranscriptionJob) => void;
+  analysisJob: ActiveAnalysisJob | null;
+  authenticated: boolean;
+  onRequestSignIn: () => void;
+  onAnalyzeMeeting: (form: FormData) => Promise<void>;
+  onTranscribeAudio: (file: File) => Promise<void>;
+}
+
+function isDocxFile(file: File) {
+  return file.name.toLowerCase().endsWith(".docx");
+}
+
+function hasDraggedFiles(dataTransfer: DataTransfer) {
+  return (
+    Array.from(dataTransfer.types).includes("Files") ||
+    Array.from(dataTransfer.items).some((item) => item.kind === "file")
+  );
+}
+
+function firstFile(files: FileList | null) {
+  return files && files.length > 0 ? files[0] : null;
+}
+
+function pipelineStepLabel(job: Pick<ActiveAnalysisJob, "currentStep"> | null, fallback = "Queued") {
+  const step = job?.currentStep ?? fallback;
+  const labels: Record<string, string> = {
+    ingestion_event: "Upload recorded",
+    transcription_queued: "Transcription queued",
+    transcribing: "Transcribing audio",
+    extracting_transcript: "Extracting transcript",
+    transcript_stored: "Transcript stored",
+    analysis_job_queued: "Analysis job queued",
+    analysis_running: "Running governed analysis",
+    embeddings_created: "Embeddings created",
+    analysis_completed: "Analysis completed",
+    analysis_failed: "Analysis failed",
+  };
+  return labels[step] ?? step.replace(/_/g, " ");
 }
 
 export default function MeetingForm({
   transcript,
   onTranscriptChange,
-  onAnalyze,
-  onShowTranscriptionJob,
-  onTranscriptionJobChange,
+  analysisJob,
+  authenticated,
+  onRequestSignIn,
+  onAnalyzeMeeting,
+  onTranscribeAudio,
 }: Props) {
   const [title, setTitle] = useState("");
   const [question, setQuestion] = useState("When was the day of meeting?");
-  const [engine, setEngine] = useState<AnalyzeRequest["summary_engine"]>("gpt");
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [documentImporting, setDocumentImporting] = useState(false);
+  const [documentDragActive, setDocumentDragActive] = useState(false);
+  const [documentMessage, setDocumentMessage] = useState("");
   const [error, setError] = useState("");
+  const analysisRunning = analysisJob?.status === "running";
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    setLoading(true);
+    if (analysisRunning || submitting) return;
+    if (!authenticated) {
+      setError("Sign in before queueing analysis.");
+      onRequestSignIn();
+      return;
+    }
+    if (!audioFile && !transcript.trim()) {
+      setError("Add meeting audio or transcript text before queueing analysis.");
+      return;
+    }
+
+    setSubmitting(true);
     setError("");
 
-    window.setTimeout(() => {
-      document.getElementById("run-status")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, 0);
-
     try {
-      const meeting = await analyzeMeeting({
-        title: title || undefined,
-        transcript,
-        follow_up_question: question,
-        summary_engine: engine,
-      });
-      await onAnalyze(meeting);
-      window.setTimeout(() => {
-        document.getElementById("agent-results")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 100);
+      const form = new FormData();
+      form.append("title", title);
+      form.append("follow_up_question", question);
+      if (audioFile) {
+        form.append("file", audioFile);
+      } else {
+        form.append("transcript", transcript);
+      }
+
+      await onAnalyzeMeeting(form);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not analyze meeting.");
+      setError(caught instanceof Error ? caught.message : "Could not queue meeting analysis.");
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   }
 
   async function handleTranscribe() {
     if (!audioFile) return;
-    const job: TranscriptionJob = {
-      fileName: audioFile.name,
-      fileSize: audioFile.size,
-      status: "running",
-      startedAt: new Date().toISOString(),
-    };
+    if (!authenticated) {
+      setError("Sign in before transcribing audio.");
+      onRequestSignIn();
+      return;
+    }
     setTranscribing(true);
     setError("");
-    onTranscriptionJobChange(job);
-    onShowTranscriptionJob();
     try {
-      const result = await transcribeMeetingAudio(audioFile);
-      onTranscriptChange(result.transcript);
-      onTranscriptionJobChange({
-        ...job,
-        status: "completed",
-        completedAt: new Date().toISOString(),
-        transcriptLength: result.transcript.length,
-      });
+      await onTranscribeAudio(audioFile);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Could not transcribe audio.";
-      setError(message);
-      onTranscriptionJobChange({
-        ...job,
-        status: "failed",
-        completedAt: new Date().toISOString(),
-        error: message,
-      });
+      setError(caught instanceof Error ? caught.message : "Could not transcribe audio.");
     } finally {
       setTranscribing(false);
     }
   }
+
+  async function handleDocumentImport(file: File | null) {
+    if (!file) return;
+
+    setDocumentMessage("");
+    if (!authenticated) {
+      setError("Sign in before importing a DOCX transcript.");
+      return;
+    }
+    if (!isDocxFile(file)) {
+      setError("Please drop or choose a .docx transcript file.");
+      return;
+    }
+
+    setDocumentImporting(true);
+    setError("");
+    try {
+      const result = await importTranscriptDocument(file);
+      onTranscriptChange(result.transcript);
+      setDocumentMessage(`${file.name} imported into transcription output.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not import the DOCX transcript.");
+    } finally {
+      setDocumentImporting(false);
+    }
+  }
+
+  function handleTranscriptDragEnter(event: DragEvent<HTMLDivElement>) {
+    if (!hasDraggedFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    setDocumentDragActive(true);
+  }
+
+  function handleTranscriptDragOver(event: DragEvent<HTMLDivElement>) {
+    if (!hasDraggedFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setDocumentDragActive(true);
+  }
+
+  function handleTranscriptDragLeave(event: DragEvent<HTMLDivElement>) {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+    setDocumentDragActive(false);
+  }
+
+  function handleTranscriptDrop(event: DragEvent<HTMLDivElement>) {
+    if (!hasDraggedFiles(event.dataTransfer)) return;
+
+    event.preventDefault();
+    setDocumentDragActive(false);
+    void handleDocumentImport(firstFile(event.dataTransfer.files));
+  }
+
+  const analysisFileLabel =
+    analysisJob?.filename || (analysisJob?.sourceType === "audio" ? "Audio upload" : "Meeting input");
+  const analysisJobDetail =
+    analysisJob?.status === "failed"
+      ? analysisJob.error || "Analysis failed."
+      : analysisJob?.status === "completed"
+        ? "Meeting analysis completed and saved."
+        : analysisJob
+          ? `Job ${analysisJob.jobId.slice(0, 8)} is running for ${analysisFileLabel}.`
+          : "";
+  const queueDisabled = !authenticated || submitting || analysisRunning || (!transcript.trim() && !audioFile);
 
   return (
     <section className="panel analyze-panel">
@@ -102,13 +197,6 @@ export default function MeetingForm({
             Meeting title
             <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Weekly product sync" />
           </label>
-          <label>
-            Summary model
-            <select value={engine} onChange={(event) => setEngine(event.target.value as AnalyzeRequest["summary_engine"])}>
-              <option value="gpt">GPT model</option>
-              <option value="local">My trained model</option>
-            </select>
-          </label>
         </div>
 
         <div className="audio-row">
@@ -123,17 +211,46 @@ export default function MeetingForm({
           <button
             className={`button ${audioFile ? "primary" : "secondary"}`}
             type="button"
-            disabled={!audioFile || transcribing}
+            disabled={!authenticated || !audioFile || transcribing}
             onClick={handleTranscribe}
           >
-            {transcribing ? "Transcribing..." : "Transcribe audio"}
+            {!authenticated ? "Sign in to transcribe" : transcribing ? "Transcribing..." : "Transcribe audio"}
           </button>
         </div>
 
-        <label>
-          Whisper API transcript output
-          <textarea value={transcript} onChange={(event) => onTranscriptChange(event.target.value)} rows={12} />
-        </label>
+        <div className="transcript-input-group">
+          <div className="transcript-label-row">
+            <label htmlFor="meeting-transcript">Transcription output</label>
+            <span
+              className="info-tooltip"
+              tabIndex={0}
+              aria-label="Drag a .docx file onto the transcript box to import it."
+            >
+              i
+            </span>
+          </div>
+          <div
+            className={`transcript-dropzone ${documentDragActive ? "drag-active" : ""}`}
+            onDragEnter={handleTranscriptDragEnter}
+            onDragOver={handleTranscriptDragOver}
+            onDragLeave={handleTranscriptDragLeave}
+            onDrop={handleTranscriptDrop}
+          >
+            <textarea
+              id="meeting-transcript"
+              value={transcript}
+              onChange={(event) => onTranscriptChange(event.target.value)}
+              rows={12}
+              aria-busy={documentImporting}
+            />
+            {(documentDragActive || documentImporting) && (
+              <div className="transcript-drop-overlay" aria-hidden="true">
+                {documentImporting ? "Importing DOCX..." : "Drop DOCX to import"}
+              </div>
+            )}
+          </div>
+          {documentMessage && <p className="docx-import-status">{documentMessage}</p>}
+        </div>
 
         <label>
           Ask a follow-up question
@@ -141,14 +258,20 @@ export default function MeetingForm({
         </label>
 
         {error && <p className="error">{error}</p>}
-        {loading && (
-          <div className="run-status" id="run-status">
-            <strong>Agent is running</strong>
-            <span>Reading meeting, creating summary, finding actions, and saving everything to SQLite.</span>
+        {analysisJob && (
+          <div className={`run-status ${analysisJob.status}`} id="run-status">
+            <strong>{pipelineStepLabel(analysisJob)}</strong>
+            <span>{analysisJobDetail}</span>
           </div>
         )}
-        <button className="button primary" disabled={loading || !transcript.trim()}>
-          {loading ? "Running agent..." : "Run AI Meeting Agent"}
+        <button className="button primary" disabled={queueDisabled}>
+          {!authenticated
+            ? "Sign in to run"
+            : analysisRunning
+              ? "Running pipeline..."
+              : submitting
+                ? "Queueing analysis..."
+                : "Queue AI Meeting Agent"}
         </button>
       </form>
     </section>

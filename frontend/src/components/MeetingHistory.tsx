@@ -2,11 +2,12 @@ import { useEffect, useState, type FormEvent } from "react";
 import ExportButtons from "./ExportButtons";
 import FollowUpAnswer from "./FollowUpAnswer";
 import MeetingSummary from "./MeetingSummary";
-import type { Meeting, MeetingListItem } from "../types";
+import type { ActiveAnalysisJob, Meeting, MeetingListItem } from "../types";
 
 interface Props {
   meetings: MeetingListItem[];
   selectedMeeting: Meeting | null;
+  analysisJob: ActiveAnalysisJob | null;
   loadingMeetingId: number | null;
   onSelect: (id: number) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
@@ -23,9 +24,33 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function pipelineStepLabel(job: Pick<ActiveAnalysisJob, "currentStep">) {
+  const labels: Record<string, string> = {
+    ingestion_event: "Upload recorded",
+    transcription_queued: "Transcription queued",
+    transcribing: "Transcribing audio",
+    extracting_transcript: "Extracting transcript",
+    transcript_stored: "Transcript stored",
+    analysis_job_queued: "Analysis job queued",
+    analysis_running: "Running governed analysis",
+    embeddings_created: "Embeddings created",
+    analysis_completed: "Analysis completed",
+    analysis_failed: "Analysis failed",
+  };
+  return labels[job.currentStep] ?? job.currentStep.replace(/_/g, " ");
+}
+
+function jobCopy(job: ActiveAnalysisJob) {
+  if (job.status === "failed") {
+    return job.error || "Analysis failed.";
+  }
+  return `Job ${job.jobId.slice(0, 8)} is still analyzing this meeting. Results will appear here when it finishes.`;
+}
+
 export default function MeetingHistory({
   meetings,
   selectedMeeting,
+  analysisJob,
   loadingMeetingId,
   onSelect,
   onDelete,
@@ -64,6 +89,13 @@ export default function MeetingHistory({
     }
   }
 
+  function activeJobForMeeting(meetingId: number) {
+    return analysisJob?.meetingId === meetingId && analysisJob.status !== "completed" ? analysisJob : null;
+  }
+
+  const selectedAnalysisJob = selectedMeeting ? activeJobForMeeting(selectedMeeting.id) : null;
+  const showCompletedAnalysis = !selectedAnalysisJob;
+
   return (
     <section className="page-grid">
       <div className="panel list-panel">
@@ -84,9 +116,13 @@ export default function MeetingHistory({
                 <button className="meeting-row-main" onClick={() => onSelect(meeting.id)}>
                   <strong>{meeting.title}</strong>
                   <span>{formatDate(meeting.created_at)}</span>
-                  <small>
-                    {meeting.done_count}/{meeting.action_count} actions done
-                  </small>
+                  {activeJobForMeeting(meeting.id) ? (
+                    <small>{activeJobForMeeting(meeting.id)?.status === "failed" ? "Analysis failed" : "Analyzing meeting..."}</small>
+                  ) : (
+                    <small>
+                      {meeting.done_count}/{meeting.action_count} actions done
+                    </small>
+                  )}
                   {loadingMeetingId === meeting.id && <small>Loading...</small>}
                 </button>
                 <button
@@ -111,7 +147,16 @@ export default function MeetingHistory({
           <>
             <div className="result-header compact">
               <div>
-                <p className="eyebrow">Meeting detail</p>
+                <div className="detail-eyebrow-row">
+                  <p className="eyebrow">Meeting detail</p>
+                  <span
+                    className="info-tooltip"
+                    tabIndex={0}
+                    aria-label="Double-click the meeting title to rename it."
+                  >
+                    i
+                  </span>
+                </div>
                 {editingTitle ? (
                   <form className="title-edit-form" onSubmit={(event) => void saveTitle(event)}>
                     <input
@@ -149,11 +194,30 @@ export default function MeetingHistory({
                     </button>
                   </div>
                 )}
+                {selectedMeeting.run_id && (
+                  <p className="run-id-line">
+                    Run ID <code>{selectedMeeting.run_id}</code>
+                  </p>
+                )}
               </div>
               <ExportButtons meetingId={selectedMeeting.id} />
             </div>
-            <FollowUpAnswer question={selectedMeeting.follow_up_question} answer={selectedMeeting.follow_up_answer} />
-            <MeetingSummary meeting={selectedMeeting} />
+            {selectedAnalysisJob && (
+              <div className={`run-status ${selectedAnalysisJob.status}`}>
+                <strong>{pipelineStepLabel(selectedAnalysisJob)}</strong>
+                <span>{jobCopy(selectedAnalysisJob)}</span>
+              </div>
+            )}
+            {showCompletedAnalysis && (
+              <>
+                <FollowUpAnswer
+                  question={selectedMeeting.follow_up_question}
+                  answer={selectedMeeting.follow_up_answer}
+                  sources={selectedMeeting.follow_up_sources}
+                />
+                <MeetingSummary meeting={selectedMeeting} />
+              </>
+            )}
             <details className="panel transcript-panel">
               <summary>Transcript</summary>
               <p>{selectedMeeting.transcript}</p>

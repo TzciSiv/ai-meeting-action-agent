@@ -1,16 +1,15 @@
 import { FormEvent, useState } from "react";
-import { login, register, storeAuth } from "../api";
+import { login, register, startDemoSession, storeAuth } from "../api";
 import type { User } from "../types";
 
 interface Props {
   onAuthenticated: (user: User) => void;
   onCancel: () => void;
-  onContinueDemo: () => void;
 }
 
 type AuthMode = "login" | "register";
 
-export default function AuthPage({ onAuthenticated, onCancel, onContinueDemo }: Props) {
+export default function AuthPage({ onAuthenticated, onCancel }: Props) {
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("demo@example.com");
   const [password, setPassword] = useState("password123");
@@ -24,10 +23,24 @@ export default function AuthPage({ onAuthenticated, onCancel, onContinueDemo }: 
     setError("");
     try {
       const auth = mode === "login" ? await login(email, password) : await register(email, password);
-      storeAuth(auth, "signed-in");
+      storeAuth(auth);
       onAuthenticated(auth.user);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Authentication failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDemoSignIn() {
+    setLoading(true);
+    setError("");
+    try {
+      const auth = await startDemoSession();
+      storeAuth(auth);
+      onAuthenticated(auth.user);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not sign in to the demo account.");
     } finally {
       setLoading(false);
     }
@@ -37,13 +50,13 @@ export default function AuthPage({ onAuthenticated, onCancel, onContinueDemo }: 
     <main className="auth-page focused-auth-page">
       <section className="panel auth-panel focused-auth-panel">
         <button className="auth-back" type="button" onClick={onCancel}>
-          Back to demo workspace
+          Back to app
         </button>
 
         <div className="auth-title">
-          <p className="eyebrow">Optional account</p>
-          <h1>Sign in to save your workspace</h1>
-          <p>Demo mode is active. Sign in only if you want a private workspace.</p>
+          <p className="eyebrow">Account required</p>
+          <h1>Sign in to continue</h1>
+          <p>Every workspace request uses a user token. Use your own account or sign in to the demo account.</p>
         </div>
 
         <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
@@ -89,8 +102,8 @@ export default function AuthPage({ onAuthenticated, onCancel, onContinueDemo }: 
           <button className="button primary" disabled={loading || !email.trim() || password.length < 6}>
             {loading ? "Please wait..." : mode === "login" ? "Sign in" : "Create account"}
           </button>
-          <button className="button secondary" type="button" onClick={onContinueDemo}>
-            Continue as demo
+          <button className="button secondary" type="button" onClick={handleDemoSignIn} disabled={loading}>
+            Sign in to demo account
           </button>
         </form>
       </section>

@@ -1,6 +1,8 @@
 {
+  "name": "ai-meeting-action-agent",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:docker": "vite --host 0.0.0.0",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

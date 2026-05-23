@@ -28,6 +28,7 @@ load_environment()
 JWT_ALGORITHM = "HS256"
 DEMO_EMAIL = "demo@example.com"
 DEMO_PASSWORD = "password123"
+VALID_ROLES = {"owner", "reviewer", "admin"}
 
 
 def jwt_secret_key() -> str:
@@ -123,6 +124,7 @@ def user_to_dict(user: User) -> dict[str, Any]:
     return {
         "id": user.id,
         "email": user.email,
+        "role": user.role,
         "created_at": user.created_at,
     }
 
@@ -135,13 +137,24 @@ def get_user_by_id(db: Session, user_id: int) -> User | None:
     return db.get(User, user_id)
 
 
-def create_user(db: Session, email: str, password: str) -> User:
+def normalize_role(role: str | None) -> str:
+    normalized = (role or "owner").strip().lower()
+    if normalized not in VALID_ROLES:
+        raise ValueError("Invalid user role")
+    return normalized
+
+
+def create_user(db: Session, email: str, password: str, role: str | None = None) -> User:
     normalized = normalize_email(email)
     if get_user_by_email(db, normalized) is not None:
         raise ValueError("Email is already registered")
 
     existing_users = db.scalar(select(func.count(User.id))) or 0
-    user = User(email=normalized, password_hash=hash_password(password))
+    default_role = os.getenv("DEFAULT_USER_ROLE", "owner")
+    if role is None and existing_users == 0 and os.getenv("FIRST_USER_ADMIN", "true").lower() == "true":
+        default_role = "admin"
+    user_role = normalize_role(role or default_role)
+    user = User(email=normalized, password_hash=hash_password(password), role=user_role)
     db.add(user)
     db.flush()
 
@@ -163,5 +176,10 @@ def authenticate_user(db: Session, email: str, password: str) -> User | None:
 def ensure_demo_user(db: Session) -> User:
     existing = get_user_by_email(db, DEMO_EMAIL)
     if existing is not None:
+        desired_role = normalize_role(os.getenv("DEMO_USER_ROLE", "admin"))
+        if existing.role != desired_role and os.getenv("SYNC_DEMO_USER_ROLE", "true").lower() == "true":
+            existing.role = desired_role
+            db.commit()
+            db.refresh(existing)
         return existing
-    return create_user(db, DEMO_EMAIL, DEMO_PASSWORD)
+    return create_user(db, DEMO_EMAIL, DEMO_PASSWORD, role=os.getenv("DEMO_USER_ROLE", "admin"))

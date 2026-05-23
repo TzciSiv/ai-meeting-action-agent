@@ -31,11 +31,10 @@ dist/
 *.egg-info/
 .eggs/
 
-# Local databases and runtime data
+# Local runtime data
 *.db
-*.sqlite
-*.sqlite3
 data/
+.docker-codex/
 
 # Frontend dependencies, cache, and build output
 node_modules/
@@ -53,15 +52,13 @@ pnpm-debug.log*
 *.docx
 *.pdf
 
-# Local model and training artifacts
-models/
+# Generated model artifacts
 *.safetensors
 *.bin
 *.pt
 *.pth
 *.onnx
 checkpoint-*/
-summarization_model_training/**/__pycache__/
 
 # Editor and OS files
 .vscode/

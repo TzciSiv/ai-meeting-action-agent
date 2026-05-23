@@ -1,4 +1,3 @@
-import json
 import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -12,26 +11,10 @@ from .config import load_environment
 load_environment()
 
 
-SUMMARY_SCHEMA = {
-    "overview": "A short 2-4 sentence overview of the meeting.",
-    "key_discussion_points": ["Specific points discussed."],
-    "decisions_made": ["Decisions or 'None captured'."],
-}
-
-ACTION_ITEMS_SCHEMA = {
-    "action_items": [
-        {
-            "task": "Concrete task to complete.",
-            "owner": "Named owner or 'Unassigned'.",
-            "deadline": "Deadline or 'Not mentioned'.",
-            "evidence": "Short supporting quote or sentence from the transcript.",
-        }
-    ],
-}
-
 TRANSCRIPTION_SINGLE_FILE_LIMIT_BYTES = 25 * 1024 * 1024
-TRANSCRIPTION_CHUNK_BYTES = 24 * 1024 * 1024
+TRANSCRIPTION_CHUNK_BYTES = 6 * 1024 * 1024
 TRANSCRIPT_FORMAT_CHARS = 12000
+MP3_SUFFIXES = {".mp3", ".mpeg", ".mpga"}
 
 MPEG_BITRATES = {
     ("1", "I"): [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0],
@@ -49,64 +32,32 @@ MPEG_SAMPLE_RATES = {
 }
 
 
-def normalize_summary_dict(summary: dict | str) -> dict:
-    if isinstance(summary, str):
-        try:
-            summary = json.loads(summary)
-        except json.JSONDecodeError:
-            return {
-                "overview": summary.strip() or "No overview returned.",
-                "key_discussion_points": [],
-                "decisions_made": [],
-                "action_items": [],
-            }
-
-    return {
-        "overview": summary.get("overview", "No overview returned."),
-        "key_discussion_points": summary.get("key_discussion_points", []) or [],
-        "decisions_made": summary.get("decisions_made", []) or [],
-    }
-
-
-def normalize_action_items_response(response: dict | str | list | None) -> list[dict[str, str]]:
-    if isinstance(response, str):
-        try:
-            response = json.loads(response)
-        except json.JSONDecodeError:
-            return []
-
-    if isinstance(response, list):
-        raw_items = response
-    elif isinstance(response, dict):
-        raw_items = response.get("action_items", []) or response.get("actions", []) or response.get("items", [])
-    else:
-        raw_items = []
-
-    action_items = []
-    for item in raw_items:
-        if not isinstance(item, dict):
-            continue
-
-        task = str(item.get("task", "")).strip()
-        if not task or task.lower() in {"none", "n/a", "not mentioned"}:
-            continue
-
-        action_items.append(
-            {
-                "task": task,
-                "owner": str(item.get("owner", "Unassigned") or "Unassigned").strip() or "Unassigned",
-                "deadline": str(item.get("deadline", "Not mentioned") or "Not mentioned").strip()
-                or "Not mentioned",
-                "evidence": str(item.get("evidence", "") or "").strip(),
-            }
-        )
-
-    return action_items
-
-
 def get_client() -> OpenAI:
     timeout_seconds = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "120"))
     return OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=timeout_seconds)
+
+
+def supports_custom_temperature(model: str) -> bool:
+    """GPT-5 chat models only support the default temperature value."""
+    return not model.lower().startswith("gpt-5")
+
+
+def create_chat_completion(
+    client: OpenAI,
+    model: str,
+    messages: list[dict],
+    temperature: float | None = None,
+    **kwargs,
+):
+    request = {
+        "model": model,
+        "messages": messages,
+        **kwargs,
+    }
+    if temperature is not None and supports_custom_temperature(model):
+        request["temperature"] = temperature
+
+    return client.chat.completions.create(**request)
 
 
 def _synchsafe_size(value: bytes) -> int:
@@ -182,8 +133,8 @@ def _split_mp3_frames(data: bytes, max_chunk_size: int = TRANSCRIPTION_CHUNK_BYT
 
     if not chunks:
         raise ValueError(
-            "This audio file is over 25 MB and could not be split safely. "
-            "Please compress it below 25 MB or upload it as a standard MP3 file."
+            "This audio file could not be split safely. "
+            "Please upload it as a standard MP3 file or use a shorter recording."
         )
     return chunks
 
@@ -235,12 +186,12 @@ def format_transcript_text(raw_transcript: str, client: OpenAI | None = None) ->
         return ""
 
     client = client or get_client()
-    model = os.getenv("OPENAI_SUMMARY_MODEL", "gpt-4o-mini")
+    model = os.getenv("OPENAI_SUMMARY_MODEL", "gpt-5-mini")
     formatted_parts = []
 
     for part in _split_text_for_formatting(raw_transcript):
         prompt = f"""
-Format this raw Whisper transcript into a clean transcript for a meeting app.
+Format this raw speech-to-text transcript into a clean transcript for a meeting app.
 
 Rules:
 - Preserve the original meaning, order, facts, names, dates, numbers, and action items.
@@ -257,7 +208,8 @@ Raw transcript:
 {part}
 """.strip()
 
-        response = client.chat.completions.create(
+        response = create_chat_completion(
+            client,
             model=model,
             messages=[
                 {"role": "system", "content": "You format raw speech-to-text output into clean transcript text."},
@@ -271,157 +223,34 @@ Raw transcript:
 
 
 def transcribe_audio(uploaded_file: BinaryIO, filename: str) -> str:
-    model = os.getenv("OPENAI_TRANSCRIBE_MODEL", "whisper-1")
+    model = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
     suffix = Path(filename).suffix or ".mp3"
+    is_mp3 = suffix.lower() in MP3_SUFFIXES
     audio_bytes = uploaded_file.read()
+    client = get_client()
 
-    if len(audio_bytes) <= TRANSCRIPTION_SINGLE_FILE_LIMIT_BYTES:
-        client = get_client()
-        temp_path = _write_temp_file(audio_bytes, suffix)
-        try:
-            raw_transcript = _transcribe_file_path(client, model, temp_path)
-            return format_transcript_text(raw_transcript, client=client)
-        finally:
-            Path(temp_path).unlink(missing_ok=True)
-
-    if suffix.lower() != ".mp3":
+    if not is_mp3 and len(audio_bytes) > TRANSCRIPTION_SINGLE_FILE_LIMIT_BYTES:
         raise ValueError(
-            "This audio file is over 25 MB. Please compress it below 25 MB or upload it as an MP3 so it can be split."
+            "This audio is too long for one transcription request. "
+            "Convert it to MP3 or use a shorter file."
         )
 
-    client = get_client()
+    chunks = (
+        _split_mp3_frames(audio_bytes, max_chunk_size=TRANSCRIPTION_CHUNK_BYTES)
+        if is_mp3 and len(audio_bytes) > TRANSCRIPTION_CHUNK_BYTES
+        else [audio_bytes]
+    )
+
     temp_paths: list[str] = []
     try:
         transcripts = []
-        for chunk in _split_mp3_frames(audio_bytes, max_chunk_size=TRANSCRIPTION_CHUNK_BYTES):
-            temp_path = _write_temp_file(chunk, ".mp3")
+        for chunk in chunks:
+            temp_path = _write_temp_file(chunk, ".mp3" if is_mp3 else suffix)
             temp_paths.append(temp_path)
             raw_transcript = _transcribe_file_path(client, model, temp_path).strip()
-            transcripts.append(format_transcript_text(raw_transcript, client=client))
+            if raw_transcript:
+                transcripts.append(format_transcript_text(raw_transcript, client=client))
         return "\n\n".join(transcript for transcript in transcripts if transcript)
     finally:
         for temp_path in temp_paths:
             Path(temp_path).unlink(missing_ok=True)
-
-
-def summarize_transcript(cleaned_transcript: str, follow_up_question: str = "") -> dict:
-    model = os.getenv("OPENAI_SUMMARY_MODEL", "gpt-4o-mini")
-    schema = dict(SUMMARY_SCHEMA)
-    follow_up_question = follow_up_question.strip()
-    if follow_up_question:
-        schema["follow_up_answer"] = "A direct answer to the follow-up question using only the transcript."
-
-    prompt = f"""
-Create a structured meeting summary from this cleaned transcript.
-
-Return only valid JSON using this shape:
-{json.dumps(schema, indent=2)}
-
-Rules:
-- Preserve important facts, decisions, numbers, names, deadlines, and risks.
-- Do not invent decisions.
-- If a follow-up question is provided, answer it directly and concisely using only the transcript.
-- If the answer is not in the transcript, say "Not mentioned."
-
-Follow-up question:
-{follow_up_question or "None"}
-
-Transcript:
-{cleaned_transcript}
-""".strip()
-
-    response = get_client().chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": "You are a careful meeting analyst who produces concise JSON summaries."},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.2,
-        response_format={"type": "json_object"},
-    )
-    content = response.choices[0].message.content or "{}"
-    return json.loads(content)
-
-
-def extract_action_items(cleaned_transcript: str) -> list[dict[str, str]]:
-    model = os.getenv("OPENAI_SUMMARY_MODEL", "gpt-4o-mini")
-    prompt = f"""
-Extract concrete action items from this meeting transcript.
-
-Return only valid JSON using this shape:
-{json.dumps(ACTION_ITEMS_SCHEMA, indent=2)}
-
-Rules:
-- Include only real post-meeting tasks, deliverables, or follow-up work.
-- Exclude commentary, explanations, opinions, agenda items, jokes, introductions, and filler.
-- Exclude vague phrases such as "I'll tell you why", "I'll share one thing", "this should be helpful", or "we should think about it" unless they contain a concrete deliverable.
-- Do not turn discussion topics into tasks.
-- Do not invent tasks, owners, deadlines, or evidence.
-- If an owner is not explicit, use "Unassigned".
-- If a deadline is not explicit, use "Not mentioned".
-- Evidence must be a short quote or sentence from the transcript that supports the task.
-- If there are no concrete action items, return {{"action_items": []}}.
-
-Transcript:
-{cleaned_transcript}
-""".strip()
-
-    response = get_client().chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": "You extract only concrete meeting action items as strict JSON."},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.0,
-        response_format={"type": "json_object"},
-    )
-    content = response.choices[0].message.content or "{}"
-    return normalize_action_items_response(content)
-
-
-def answer_follow_up_question(cleaned_transcript: str, question: str) -> str:
-    question = question.strip()
-    if not question:
-        return ""
-
-    model = os.getenv("OPENAI_SUMMARY_MODEL", "gpt-4o-mini")
-    prompt = f"""
-Answer the follow-up question using only the meeting transcript.
-
-Rules:
-- Give the shortest useful answer.
-- If the answer is a date, return only the date.
-- Do not explain your reasoning.
-- If the transcript does not contain the answer, say "Not mentioned."
-
-Question:
-{question}
-
-Transcript:
-{cleaned_transcript}
-""".strip()
-
-    response = get_client().chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": "You answer meeting follow-up questions using only the transcript."},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.0,
-    )
-    return (response.choices[0].message.content or "").strip()
-
-
-def summary_to_markdown(summary: dict) -> str:
-    summary = normalize_summary_dict(summary)
-    lines = ["## Overview", summary.get("overview", "No overview returned."), ""]
-
-    lines.append("## Key Discussion Points")
-    for point in summary.get("key_discussion_points", []) or ["None captured"]:
-        lines.append(f"- {point}")
-
-    lines.extend(["", "## Decisions Made"])
-    for decision in summary.get("decisions_made", []) or ["None captured"]:
-        lines.append(f"- {decision}")
-
-    return "\n".join(lines)

@@ -28,23 +28,13 @@ class RecordingTranscriptions:
 class RecordingChatCompletions:
     def __init__(self) -> None:
         self.prompts: list[str] = []
+        self.temperatures: list[float | None] = []
 
-    def create(self, model: str, messages: list[dict], temperature: float, **kwargs):
+    def create(self, model: str, messages: list[dict], **kwargs):
         self.prompts.append(messages[-1]["content"])
+        self.temperatures.append(kwargs.get("temperature"))
         content = f"formatted transcript {len(self.prompts)}"
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
-
-
-class JsonChatCompletions:
-    def __init__(self, content: str) -> None:
-        self.content = content
-        self.prompts: list[str] = []
-        self.response_formats: list[dict] = []
-
-    def create(self, model: str, messages: list[dict], temperature: float, **kwargs):
-        self.prompts.append(messages[-1]["content"])
-        self.response_formats.append(kwargs.get("response_format", {}))
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self.content))])
 
 
 class RecordingAudio:
@@ -63,16 +53,6 @@ class RecordingClient:
         self.chat = RecordingChat()
 
 
-class JsonChat:
-    def __init__(self, content: str) -> None:
-        self.completions = JsonChatCompletions(content)
-
-
-class JsonClient:
-    def __init__(self, content: str) -> None:
-        self.chat = JsonChat(content)
-
-
 class LlmTranscriptionTests(unittest.TestCase):
     def test_splits_mp3_on_frame_boundaries(self):
         chunks = _split_mp3_frames(sample_mp3(8), max_chunk_size=1000)
@@ -83,18 +63,15 @@ class LlmTranscriptionTests(unittest.TestCase):
 
     def test_transcribes_large_mp3_in_chunks(self):
         original_get_client = llm_module.get_client
-        original_single_limit = llm_module.TRANSCRIPTION_SINGLE_FILE_LIMIT_BYTES
         original_chunk_limit = llm_module.TRANSCRIPTION_CHUNK_BYTES
         client = RecordingClient()
         llm_module.get_client = lambda: client
-        llm_module.TRANSCRIPTION_SINGLE_FILE_LIMIT_BYTES = 1000
         llm_module.TRANSCRIPTION_CHUNK_BYTES = 1000
 
         try:
             transcript = transcribe_audio(io.BytesIO(sample_mp3(8)), "meeting.mp3")
         finally:
             llm_module.TRANSCRIPTION_CHUNK_BYTES = original_chunk_limit
-            llm_module.TRANSCRIPTION_SINGLE_FILE_LIMIT_BYTES = original_single_limit
             llm_module.get_client = original_get_client
 
         self.assertEqual(
@@ -114,46 +91,16 @@ class LlmTranscriptionTests(unittest.TestCase):
         self.assertIn("generic labels", client.chat.completions.prompts[0])
         self.assertIn("Never return bold labels", client.chat.completions.prompts[0])
         self.assertIn("james will fix", client.chat.completions.prompts[0])
+        self.assertIsNone(client.chat.completions.temperatures[0])
 
     def test_rejects_large_non_mp3_file(self):
         original_single_limit = llm_module.TRANSCRIPTION_SINGLE_FILE_LIMIT_BYTES
         llm_module.TRANSCRIPTION_SINGLE_FILE_LIMIT_BYTES = 10
         try:
-            with self.assertRaisesRegex(ValueError, "over 25 MB"):
+            with self.assertRaisesRegex(ValueError, "too long for one transcription request"):
                 transcribe_audio(io.BytesIO(b"not an mp3 file that is too large"), "meeting.wav")
         finally:
             llm_module.TRANSCRIPTION_SINGLE_FILE_LIMIT_BYTES = original_single_limit
-
-    def test_extracts_action_items_with_strict_gpt_prompt(self):
-        original_get_client = llm_module.get_client
-        client = JsonClient(
-            """
-            {
-              "action_items": [
-                {
-                  "task": "Finalize the Android crash fix",
-                  "owner": "James",
-                  "deadline": "Tuesday",
-                  "evidence": "James: I will finalize the Android crash fix by Tuesday."
-                }
-              ]
-            }
-            """
-        )
-        llm_module.get_client = lambda: client
-
-        try:
-            actions = llm_module.extract_action_items(
-                "Maya: This one I couldn't pick, and I'll tell you why.\n"
-                "James: I will finalize the Android crash fix by Tuesday."
-            )
-        finally:
-            llm_module.get_client = original_get_client
-
-        self.assertEqual(len(actions), 1)
-        self.assertEqual(actions[0]["task"], "Finalize the Android crash fix")
-        self.assertIn("Exclude vague phrases", client.chat.completions.prompts[0])
-        self.assertEqual(client.chat.completions.response_formats[0], {"type": "json_object"})
 
 
 if __name__ == "__main__":
