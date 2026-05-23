@@ -507,14 +507,16 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(metrics_response.status_code, 401)
 
     def test_metrics_endpoint_reports_local_ops_counters(self):
-        headers = self.auth_headers("metrics@example.com")
+        email = "metrics@example.com"
+        headers = self.auth_headers(email)
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
         self.assertIn("X-Request-ID", response.headers)
 
         db = self.SessionLocal()
         try:
-            meeting = create_analyzed_meeting(db, user_id=self.user.id)
+            user = db.query(User).filter(User.email == email).one()
+            meeting = create_analyzed_meeting(db, user_id=user.id)
             meeting.generation_latency_ms = 42000
             db.commit()
         finally:
